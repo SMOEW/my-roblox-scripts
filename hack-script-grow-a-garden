@@ -1,0 +1,272 @@
+-- LocalScript (put inside StarterGui)
+-- NOTE: This script intentionally DOES NOT include any threatening/doxxing message.
+-- If you want to change the final kick message, edit finalKickMessage below.
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Config
+local loadingStepDelay = 0.02        -- time between percent increments (seconds)
+local errorPause = 1.0               -- how long to show "ERROR" before restarting
+local maxErrors = 2                  -- number of times to show ERROR/retry (user asked "2 times")
+local finalKickMessage = "I know your adress skid so get out." -- SAFE message used when kicking
+
+-- Utility: create ScreenGui (unique)
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "BypassGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = playerGui
+
+-- Helper: make a frame draggable
+local function makeDraggable(frame)
+	frame.Active = true
+	local dragging, dragInput, dragStart, startPos
+
+	local function update(input)
+		local delta = input.Position - dragStart
+		frame.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+
+	frame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			dragStart = input.Position
+			startPos = frame.Position
+
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false
+				end
+			end)
+		end
+	end)
+
+	frame.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then
+			dragInput = input
+		end
+	end)
+
+	Players.LocalPlayer:GetMouse().Move:Connect(function()
+		if dragging and dragInput then
+			-- use current mouse position (dragInput.Position is updated by engine)
+			local pos = game:GetService("UserInputService"):GetMouseLocation()
+			local delta = pos - dragStart
+			-- update based on delta (use startPos stored earlier)
+			frame.Position = UDim2.new(
+				startPos.X.Scale,
+				startPos.X.Offset + delta.X,
+				startPos.Y.Scale,
+				startPos.Y.Offset + delta.Y
+			)
+		end
+	end)
+end
+
+-- ========== First Frame (initial view) ==========
+local frame1 = Instance.new("Frame")
+frame1.Name = "MainFrame"
+frame1.Size = UDim2.new(0, 360, 0, 180)
+frame1.Position = UDim2.new(0.5, -180, 0.5, -90)  -- centered
+frame1.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+frame1.BorderSizePixel = 0
+frame1.Parent = screenGui
+
+makeDraggable(frame1) -- make it draggable
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -20, 0, 40)
+title.Position = UDim2.new(0, 10, 0, 10)
+title.BackgroundTransparency = 1
+title.Text = "Bypass"
+title.TextScaled = true
+title.TextColor3 = Color3.fromRGB(255,255,255)
+title.Parent = frame1
+
+local startButton = Instance.new("TextButton")
+startButton.Size = UDim2.new(0.9, 0, 0.45, 0)
+startButton.Position = UDim2.new(0.05, 0, 0.35, 0)
+startButton.Text = "Enable bypass to get started"
+startButton.TextScaled = true
+startButton.BackgroundColor3 = Color3.fromRGB(70,130,180)
+startButton.TextColor3 = Color3.fromRGB(1,1,1)
+startButton.Parent = frame1
+
+-- ========== Loading Full-Screen Frame ==========
+local loadingFrame = Instance.new("Frame")
+loadingFrame.Name = "LoadingFrame"
+loadingFrame.Size = UDim2.new(1,0,1,0)           -- FULL SCREEN
+loadingFrame.Position = UDim2.new(0,0,0,0)
+loadingFrame.BackgroundColor3 = Color3.fromRGB(0,0,0)
+loadingFrame.BackgroundTransparency = 0
+loadingFrame.Visible = false
+loadingFrame.Parent = screenGui
+
+-- Large percent text (very big)
+local loadingLabel = Instance.new("TextLabel")
+loadingLabel.Size = UDim2.new(1,0,1,0)
+loadingLabel.Position = UDim2.new(0,0,0,0)
+loadingLabel.BackgroundTransparency = 1
+loadingLabel.TextScaled = false
+loadingLabel.Font = Enum.Font.GothamBlack
+loadingLabel.Text = "Loading 0%"
+loadingLabel.TextColor3 = Color3.fromRGB(255,255,255)
+loadingLabel.TextSize = 60         -- big
+loadingLabel.TextWrapped = true
+loadingLabel.TextXAlignment = Enum.TextXAlignment.Center
+loadingLabel.TextYAlignment = Enum.TextYAlignment.Center
+loadingLabel.Parent = loadingFrame
+
+-- ========== Second Frame (shown after success) ==========
+local frame2 = Instance.new("Frame")
+frame2.Name = "SecondFrame"
+frame2.Size = UDim2.new(0, 360, 0, 200)
+frame2.Position = UDim2.new(0.5, -180, 0.5, -100)
+frame2.BackgroundColor3 = Color3.fromRGB(50,50,120)
+frame2.Visible = false
+frame2.Parent = screenGui
+
+makeDraggable(frame2)
+
+local label2 = Instance.new("TextLabel")
+label2.Size = UDim2.new(1, -20, 0, 60)
+label2.Position = UDim2.new(0, 10, 0, 10)
+label2.BackgroundTransparency = 1
+label2.Text = "Welcome! Bypass complete."
+label2.TextScaled = true
+label2.TextColor3 = Color3.fromRGB(255,255,255)
+label2.Parent = frame2
+
+local freezeButton = Instance.new("TextButton")
+freezeButton.Size = UDim2.new(0.9, 0, 0.25, 0)
+freezeButton.Position = UDim2.new(0.05, 0, 0.5, 0)
+freezeButton.Text = "Freeze (local blur)"
+freezeButton.TextScaled = true
+freezeButton.BackgroundColor3 = Color3.fromRGB(200,50,50)
+freezeButton.TextColor3 = Color3.fromRGB(1,1,1)
+freezeButton.Parent = frame2
+
+-- ========== Loading & retry logic ==========
+local function doLoadingAndHandleRetries()
+	local errorsCount = 0
+
+	while true do
+		-- show loading full-screen
+		loadingFrame.Visible = true
+		loadingLabel.Text = "Loading 0%"
+
+		local percent = 0
+		local aborted = false
+
+		while percent <= 100 do
+			-- update percent display
+			loadingLabel.Text = "Loading " .. percent .. "%"
+
+			-- simulate reaching 99 and causing an error
+			if percent == 99 then
+				-- show error text
+				loadingLabel.Text = "ERROR"
+				wait(errorPause)
+				errorsCount = errorsCount + 1
+				-- if we've reached the maxErrors, break to final action after loop logic
+				if errorsCount <= maxErrors then
+					-- restart loading (break inner while, then outer loop continues)
+					aborted = true
+					break
+				else
+					-- we've exceeded allowed errors; we will proceed to final action
+					aborted = false
+					break
+				end
+			end
+
+			percent = percent + 1
+			wait(loadingStepDelay)
+		end
+
+		-- if not aborted (didn't hit error or exceeded retries and reached end),
+		-- check if we should finalize or show second frame.
+		if not aborted then
+			-- If errorsCount > maxErrors then perform final action (kick)
+			if errorsCount > maxErrors then
+				-- final action: kick player with safe message
+				-- NOTE: We intentionally do NOT include any threatening or doxxing text.
+				-- Client-side Kick (LocalPlayer:Kick usually works from client; if not, you can use a server call).
+				local success, err = pcall(function()
+					if player and player.Kick then
+						player:Kick(finalKickMessage)
+					else
+						-- fallback: show a final disconnect-like overlay then close the GUI
+						loadingLabel.Text = "Disconnected."
+						wait(2)
+						loadingFrame.Visible = false
+						frame1.Visible = false
+						frame2.Visible = false
+					end
+				end)
+				-- if Kick fails for any reason, show a message and stop
+				if not success then
+					warn("Kick failed: "..tostring(err))
+				end
+
+				-- stop the function (we've kicked or displayed message)
+				return
+			else
+				-- successful load and not exceeding errors: show second frame
+				loadingFrame.Visible = false
+				frame2.Visible = true
+				return
+			end
+		else
+			-- aborted due to error and we are retrying (loop continues)
+			-- small pause before restart
+			wait(0.25)
+			-- continue to next attempt (if errorsCount > maxErrors, loop will handle final action)
+			-- show a small "retrying..." visual if desired:
+			loadingLabel.Text = "Retrying..."
+			wait(0.4)
+		end
+	end
+end
+
+-- ========== Button connections ==========
+startButton.MouseButton1Click:Connect(function()
+	frame1.Visible = false
+	frame2.Visible = false
+	-- start loading & retry logic (blocking inside this client)
+	coroutine.wrap(function()
+		doLoadingAndHandleRetries()
+	end)()
+end)
+
+-- Freeze button: local blur that affects only this client
+local blurApplied = false
+freezeButton.MouseButton1Click:Connect(function()
+	local lighting = game:GetService("Lighting")
+	if not blurApplied then
+		-- add blur effect local client (only client sees this)
+		if not lighting:FindFirstChild("LocalFreezeBlur") then
+			local blur = Instance.new("BlurEffect")
+			blur.Name = "LocalFreezeBlur"
+			blur.Size = 20
+			blur.Parent = lighting
+		end
+		blurApplied = true
+		freezeButton.Text = "Unfreeze (local)"
+	else
+		local blur = lighting:FindFirstChild("LocalFreezeBlur")
+		if blur then blur:Destroy() end
+		blurApplied = false
+		freezeButton.Text = "Freeze (local blur)"
+	end
+end)
+
+-- Make frame1 and frame2 visible at start (frame1 is the entry)
+frame1.Visible = true
+frame2.Visible = false
